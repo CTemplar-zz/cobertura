@@ -333,23 +333,61 @@ function PortalMap({
       try {
         await import("leaflet-draw");
         if (cancelled) return;
+        type PolygonDrawContext = {
+          _markers: Array<{
+            getLatLng: () => import("leaflet").LatLng;
+            off: (event: string, handler: () => void) => void;
+            on: (event: string, handler: () => void) => void;
+          }>;
+          _map: LeafletMap;
+          _finishShape: () => void;
+          _finishOnDoubleClick?: () => void;
+          deleteLastVertex: () => void;
+        };
         const polygonPrototype = L.Draw.Polygon.prototype as unknown as {
-          _updateFinishHandler: (this: {
-            _markers: Array<{
-              on: (
-                event: string,
-                handler: () => void,
-                context: unknown,
-              ) => void;
-            }>;
-            _finishShape: () => void;
-          }) => void;
+          _updateFinishHandler: (this: PolygonDrawContext) => void;
+          _cleanUpShape: (this: PolygonDrawContext) => void;
+          __unlimitedDoubleClickPatched?: boolean;
         };
-        polygonPrototype._updateFinishHandler = function () {
-          if (this._markers.length === 1) {
-            this._markers[0].on("click", this._finishShape, this);
-          }
-        };
+        if (!polygonPrototype.__unlimitedDoubleClickPatched) {
+          const originalCleanUpShape = polygonPrototype._cleanUpShape;
+          polygonPrototype._updateFinishHandler = function () {
+            if (!this._finishOnDoubleClick) {
+              this._finishOnDoubleClick = () => {
+                const markerCount = this._markers.length;
+                if (markerCount > 3) {
+                  const last = this._markers[markerCount - 1].getLatLng();
+                  const previous = this._markers[markerCount - 2].getLatLng();
+                  if (last.distanceTo(previous) < 2) {
+                    this.deleteLastVertex();
+                  }
+                }
+                this._finishShape();
+              };
+            }
+            this._map.off("dblclick", this._finishOnDoubleClick);
+            this._markers.forEach((marker) =>
+              marker.off("dblclick", this._finishOnDoubleClick!),
+            );
+            if (this._markers.length >= 3) {
+              this._map.on("dblclick", this._finishOnDoubleClick);
+              this._markers.at(-1)?.on(
+                "dblclick",
+                this._finishOnDoubleClick,
+              );
+            }
+          };
+          polygonPrototype._cleanUpShape = function () {
+            if (this._finishOnDoubleClick) {
+              this._map.off("dblclick", this._finishOnDoubleClick);
+              this._markers.forEach((marker) =>
+                marker.off("dblclick", this._finishOnDoubleClick!),
+              );
+            }
+            originalCleanUpShape.call(this);
+          };
+          polygonPrototype.__unlimitedDoubleClickPatched = true;
+        }
         L.drawLocal.draw.toolbar.buttons.polygon =
           "Seleccionar puntos mediante un polígono";
         L.drawLocal.draw.toolbar.finish.text = "Terminar";
@@ -358,7 +396,7 @@ function PortalMap({
         L.drawLocal.draw.handlers.polygon.tooltip.cont =
           "Continúe agregando vértices.";
         L.drawLocal.draw.handlers.polygon.tooltip.end =
-          "Pulse el primer vértice o Terminar para cerrar.";
+          "Haga doble clic para terminar el polígono.";
         const drawnItems = L.featureGroup().addTo(map);
         drawnItemsRef.current = drawnItems;
         const drawControl = new L.Control.Draw({
@@ -764,7 +802,7 @@ export function PortalClient() {
           top: 18,
           bottom: 20,
           nodeWidth: 14,
-          nodeGap: 4,
+          nodeGap: 0,
           nodeAlign: "justify",
           layoutIterations: 48,
           draggable: true,
@@ -804,15 +842,15 @@ export function PortalClient() {
           top: 10,
           bottom: 10,
           nodeWidth: 18,
-          nodeGap: 3,
+          nodeGap: 0,
           label: {
             ...baseLabel,
             color: "#123c31",
-            fontSize: 14,
-            fontWeight: 650,
-            lineHeight: 17,
+            fontSize: 18,
+            fontWeight: 700,
+            lineHeight: 22,
             textBorderColor: "#ffffff",
-            textBorderWidth: 3,
+            textBorderWidth: 4,
           },
         },
       ],
