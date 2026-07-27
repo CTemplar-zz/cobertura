@@ -139,7 +139,7 @@ button {
 }
 
 .filters-header {
-  margin-bottom: 22px;
+  margin-bottom: 12px;
 }
 
 .filters-header h1,
@@ -169,6 +169,46 @@ button {
   color: var(--muted);
   display: none;
   font-size: 24px;
+}
+
+.sidebar-metrics {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.sidebar-metrics article {
+  background: linear-gradient(145deg, #ffffff, #f3f8f6);
+  border: 1px solid #d9e6e1;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  height: 68px;
+  justify-content: center;
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.sidebar-metrics span {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.1;
+}
+
+.sidebar-metrics strong {
+  color: var(--ink);
+  font-size: 16px;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  margin-top: 7px;
+}
+
+.sidebar-metrics small {
+  color: #81928c;
+  font-size: 8px;
+  line-height: 1;
+  margin-top: 2px;
 }
 
 .filter-field {

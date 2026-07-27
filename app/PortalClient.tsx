@@ -329,6 +329,32 @@ function PortalMap({
       try {
         await import("leaflet-draw");
         if (cancelled) return;
+        const polygonPrototype = L.Draw.Polygon.prototype as unknown as {
+          _updateFinishHandler: (this: {
+            _markers: Array<{
+              on: (
+                event: string,
+                handler: () => void,
+                context: unknown,
+              ) => void;
+            }>;
+            _finishShape: () => void;
+          }) => void;
+        };
+        polygonPrototype._updateFinishHandler = function () {
+          if (this._markers.length === 1) {
+            this._markers[0].on("click", this._finishShape, this);
+          }
+        };
+        L.drawLocal.draw.toolbar.buttons.polygon =
+          "Seleccionar puntos mediante un polígono";
+        L.drawLocal.draw.toolbar.finish.text = "Terminar";
+        L.drawLocal.draw.handlers.polygon.tooltip.start =
+          "Haga clic para iniciar el polígono.";
+        L.drawLocal.draw.handlers.polygon.tooltip.cont =
+          "Continúe agregando vértices.";
+        L.drawLocal.draw.handlers.polygon.tooltip.end =
+          "Pulse el primer vértice o Terminar para cerrar.";
         const drawnItems = L.featureGroup().addTo(map);
         drawnItemsRef.current = drawnItems;
         const drawControl = new L.Control.Draw({
@@ -336,6 +362,7 @@ function PortalMap({
           draw: {
             polygon: {
               allowIntersection: false,
+              maxPoints: 0,
               showArea: true,
               shapeOptions: {
                 color: "#f2c94c",
@@ -837,6 +864,18 @@ export function PortalClient() {
       : `${coverageSelection.sourceYear} ${coverageSelection.sourceCover} → ${coverageSelection.targetYear} ${coverageSelection.targetCover}`
     : "";
 
+  const sidebarMetrics = useMemo(
+    () => ({
+      points: filteredPoints.length,
+      area:
+        filteredPoints.reduce((sum, point) => sum + point.area, 0) / 10000,
+      municipalities: new Set(
+        filteredPoints.map((point) => point.municipio),
+      ).size,
+    }),
+    [filteredPoints],
+  );
+
   if (!dataset) {
     return (
       <main className="loading-screen">
@@ -862,6 +901,22 @@ export function PortalClient() {
             >
               ×
             </button>
+          </div>
+
+          <div className="sidebar-metrics" aria-label="Resumen de la selección">
+            <article>
+              <span>Puntos</span>
+              <strong>{formatNumber(sidebarMetrics.points)}</strong>
+            </article>
+            <article>
+              <span>Área</span>
+              <strong>{formatNumber(sidebarMetrics.area, 1)}</strong>
+              <small>ha</small>
+            </article>
+            <article>
+              <span>Municipios</span>
+              <strong>{sidebarMetrics.municipalities}</strong>
+            </article>
           </div>
 
           <label className="filter-field">
