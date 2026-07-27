@@ -1,0 +1,63 @@
+{
+  "source": "COBERTURA_TOTAL.xlsx",
+  "sheet": 0,
+  "rowsInWorkbook": 2893,
+  "validPointRows": 2893,
+  "years": [
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "classes": [
+    "Arbustal",
+    "Bosque",
+    "Cultivo",
+    "Estanques",
+    "Humedal",
+    "Pastizal"
+  ],
+  "municipalities": [
+    "Ascención de Guarayos",
+    "Chimoré",
+    "El Puente",
+    "Entre Ríos",
+    "Puerto Villarroel",
+    "San Carlos",
+    "San Juan",
+    "San Julián",
+    "Shinahota",
+    "Villa Tunari",
+    "Yapacaní"
+  ],
+  "ranges": {
+    "density": [
+      0.03816900029778481,
+      44.4114990234375
+    ],
+    "principal": [
+      1.69930276901,
+      44253.5770617
+    ],
+    "secondary": [
+      0.725532544496,
+      11643.4230176
+    ],
+    "parcelArea": [
+      0.358504603526,
+      143489.873347
+    ]
+  }
+}
