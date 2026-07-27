@@ -394,7 +394,7 @@ export function PortalClient() {
   const [filterOpen, setFilterOpen] = useState(false);
 
   useEffect(() => {
-    fetch("/data/points.json")
+    fetch("data/points.json")
       .then((response) => {
         if (!response.ok) throw new Error("No se pudo cargar el conjunto de datos");
         return response.json();
