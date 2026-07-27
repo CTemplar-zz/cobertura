@@ -186,17 +186,21 @@ function ChartCard({
   title,
   subtitle,
   option,
+  fullscreenOption,
   filename,
   onChartClick,
 }: {
   title: string;
   subtitle: string;
   option: EChartsOption | null;
+  fullscreenOption?: EChartsOption | null;
   filename: string;
   onChartClick?: (params: Record<string, unknown>) => void;
 }) {
-  const { containerRef, chartRef } = useChart(option, onChartClick);
   const [fullscreen, setFullscreen] = useState(false);
+  const displayedOption =
+    fullscreen && fullscreenOption ? fullscreenOption : option;
+  const { containerRef, chartRef } = useChart(displayedOption, onChartClick);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => chartRef.current?.resize(), 90);
@@ -703,6 +707,10 @@ export function PortalClient() {
       dataset.classes.map((cover) => ({
         name: `${year} · ${cover}`,
         depth,
+        label:
+          depth === SANKEY_YEARS.length - 1
+            ? { position: "left", align: "right" }
+            : { position: "right", align: "left" },
         itemStyle: {
           color: COVER_COLORS[cover],
           borderColor: "#ffffff",
@@ -756,7 +764,7 @@ export function PortalClient() {
           top: 18,
           bottom: 20,
           nodeWidth: 14,
-          nodeGap: 10,
+          nodeGap: 4,
           nodeAlign: "justify",
           layoutIterations: 48,
           draggable: true,
@@ -776,6 +784,40 @@ export function PortalClient() {
       ],
     };
   }, [dataset, spatialFilteredBasePoints]);
+
+  const sankeyFullscreenOption = useMemo<EChartsOption | null>(() => {
+    if (!sankeyOption) return null;
+    const sankeySeries = (
+      Array.isArray(sankeyOption.series)
+        ? sankeyOption.series
+        : [sankeyOption.series]
+    ).filter(Boolean) as Array<Record<string, unknown>>;
+    const primarySeries = sankeySeries[0];
+    const baseLabel = (primarySeries.label ?? {}) as Record<string, unknown>;
+    return {
+      ...sankeyOption,
+      series: [
+        {
+          ...primarySeries,
+          left: 28,
+          right: 28,
+          top: 10,
+          bottom: 10,
+          nodeWidth: 18,
+          nodeGap: 3,
+          label: {
+            ...baseLabel,
+            color: "#123c31",
+            fontSize: 14,
+            fontWeight: 650,
+            lineHeight: 17,
+            textBorderColor: "#ffffff",
+            textBorderWidth: 3,
+          },
+        },
+      ],
+    };
+  }, [sankeyOption]);
 
   const toggleCoverageSelection = useCallback(
     (next: Exclude<CoverageSelection, null>) => {
@@ -1134,6 +1176,7 @@ export function PortalClient() {
               title="Transiciones quinquenales"
               subtitle="Flujos de cobertura entre 2010, 2015, 2020 y 2025."
               option={sankeyOption}
+              fullscreenOption={sankeyFullscreenOption}
               filename="sankey_cambio_cobertura"
               onChartClick={handleSankeyClick}
             />
