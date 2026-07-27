@@ -102,6 +102,35 @@ function formatNumber(value: number, digits = 0) {
   }).format(value);
 }
 
+function getDetectionYear(point: PointRecord, years: number[]) {
+  const firstPondIndex = point.cover.findIndex((cover) => cover === "Estanques");
+  return firstPondIndex >= 0 ? years[firstPondIndex] : null;
+}
+
+function isPointInsidePolygon(
+  point: { lat: number; lng: number },
+  polygon: Array<{ lat: number; lng: number }>,
+) {
+  let inside = false;
+  for (
+    let current = 0, previous = polygon.length - 1;
+    current < polygon.length;
+    previous = current++
+  ) {
+    const currentVertex = polygon[current];
+    const previousVertex = polygon[previous];
+    const intersects =
+      currentVertex.lat > point.lat !== previousVertex.lat > point.lat &&
+      point.lng <
+        ((previousVertex.lng - currentVertex.lng) *
+          (point.lat - currentVertex.lat)) /
+          (previousVertex.lat - currentVertex.lat) +
+          currentVertex.lng;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
 function downloadChart(chart: echarts.ECharts | null, filename: string) {
   if (!chart) return;
   const link = document.createElement("a");
@@ -212,29 +241,54 @@ function ChartCard({
 
 function PortalMap({
   points,
+  selectablePoints,
   allCount,
+  years,
   symbolMode,
   selection,
+  spatialSelectionCount,
   onOpenFilters,
+  onSpatialSelect,
+  onClearSpatialSelection,
 }: {
   points: PointRecord[];
+  selectablePoints: PointRecord[];
   allCount: number;
+  years: number[];
   symbolMode: MapSymbolMode;
   selection: CoverageSelection;
+  spatialSelectionCount: number | null;
   onOpenFilters: () => void;
+  onSpatialSelect: (pointIds: number[]) => void;
+  onClearSpatialSelection: () => void;
 }) {
   const mapElement = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<LayerGroup | null>(null);
+  const drawnItemsRef = useRef<LayerGroup | null>(null);
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
+  const selectablePointsRef = useRef(selectablePoints);
+  const onSpatialSelectRef = useRef(onSpatialSelect);
   const firstDraw = useRef(true);
   const [mapReady, setMapReady] = useState(false);
+
+  useEffect(() => {
+    selectablePointsRef.current = selectablePoints;
+    onSpatialSelectRef.current = onSpatialSelect;
+  }, [onSpatialSelect, selectablePoints]);
+
+  useEffect(() => {
+    if (spatialSelectionCount === null) {
+      drawnItemsRef.current?.clearLayers();
+    }
+  }, [spatialSelectionCount]);
 
   useEffect(() => {
     let cancelled = false;
     async function initializeMap() {
       if (!mapElement.current || mapRef.current) return;
       const L = await import("leaflet");
+      await import("leaflet-draw");
       if (cancelled || !mapElement.current) return;
       leafletRef.current = L;
       const map = L.map(mapElement.current, {
@@ -268,6 +322,44 @@ function PortalMap({
         .addTo(map);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       markersRef.current = L.layerGroup().addTo(map);
+      const drawnItems = L.featureGroup().addTo(map);
+      drawnItemsRef.current = drawnItems;
+      const drawControl = new L.Control.Draw({
+        position: "topleft",
+        draw: {
+          polygon: {
+            allowIntersection: false,
+            showArea: true,
+            shapeOptions: {
+              color: "#f2c94c",
+              fillColor: "#f2c94c",
+              fillOpacity: 0.16,
+              weight: 2,
+            },
+          },
+          polyline: false,
+          rectangle: false,
+          circle: false,
+          marker: false,
+          circlemarker: false,
+        },
+        edit: false,
+      });
+      map.addControl(drawControl);
+      map.on(L.Draw.Event.CREATED, (event) => {
+        const layer = event.layer;
+        drawnItems.clearLayers();
+        drawnItems.addLayer(layer);
+        const latLngs = (
+          layer as import("leaflet").Polygon
+        ).getLatLngs()[0] as Array<{ lat: number; lng: number }>;
+        const selectedIds = selectablePointsRef.current
+          .filter((point) =>
+            isPointInsidePolygon({ lat: point.y, lng: point.x }, latLngs),
+          )
+          .map((point) => point.id);
+        onSpatialSelectRef.current(selectedIds);
+      });
       mapRef.current = map;
       setMapReady(true);
     }
@@ -277,6 +369,7 @@ function PortalMap({
       mapRef.current?.remove();
       mapRef.current = null;
       markersRef.current = null;
+      drawnItemsRef.current = null;
       setMapReady(false);
     };
   }, []);
@@ -290,7 +383,7 @@ function PortalMap({
     group.clearLayers();
     const bounds = L.latLngBounds([]);
     points.forEach((point) => {
-      let symbolValue = point.cover.at(-1) ?? "Sin clase";
+      let symbolValue = point.cover[0] ?? "Sin clase";
       if (symbolMode === "density") symbolValue = point.densityClass;
       if (symbolMode === "parcel") symbolValue = point.parcelClass;
       if (symbolMode === "selection" && selection) {
@@ -314,7 +407,7 @@ function PortalMap({
           <strong>${point.code}</strong>
           <span>${point.municipio}</span>
           <dl>
-            <dt>Año</dt><dd>${point.year}</dd>
+            <dt>Año de detección</dt><dd>${getDetectionYear(point, years) ?? "No detectado"}</dd>
             <dt>Área estanque</dt><dd>${formatNumber(point.area / 10000, 2)} ha</dd>
             <dt>Densidad</dt><dd>${formatNumber(point.density, 2)} est./km²</dd>
             <dt>Predio</dt><dd>${formatNumber(point.parcelArea, 2)} ha</dd>
@@ -331,7 +424,7 @@ function PortalMap({
       });
       firstDraw.current = false;
     }
-  }, [points, allCount, mapReady, selection, symbolMode]);
+  }, [points, allCount, mapReady, selection, symbolMode, years]);
 
   const legend =
     symbolMode === "density" || symbolMode === "parcel"
@@ -355,7 +448,7 @@ function PortalMap({
         ? "Superficie del predio"
         : symbolMode === "selection"
           ? "Selección del gráfico"
-          : "Cobertura 2025";
+          : "Cobertura 2010";
 
   return (
     <section className="map-card">
@@ -366,6 +459,20 @@ function PortalMap({
           <p>Explore los puntos y su cambio de cobertura entre 2010 y 2025.</p>
         </div>
         <div className="map-title-actions">
+          {spatialSelectionCount !== null ? (
+            <button
+              className="spatial-clear"
+              onClick={() => {
+                drawnItemsRef.current?.clearLayers();
+                onClearSpatialSelection();
+              }}
+            >
+              Área seleccionada · {formatNumber(spatialSelectionCount)}
+              <span aria-hidden="true">×</span>
+            </button>
+          ) : (
+            <span className="draw-helper">Dibuje un polígono para filtrar</span>
+          )}
           <span className="live-pill">{formatNumber(points.length)} visibles</span>
           <button className="filter-toggle" onClick={onOpenFilters}>
             Filtros
@@ -391,6 +498,8 @@ export function PortalClient() {
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [coverageSelection, setCoverageSelection] =
     useState<CoverageSelection>(null);
+  const [spatialSelectionIds, setSpatialSelectionIds] =
+    useState<Set<number> | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
 
   useEffect(() => {
@@ -429,6 +538,7 @@ export function PortalClient() {
     const yearMax = Number(filters.yearMax);
     const search = filters.search.trim().toLocaleLowerCase("es");
     return dataset.points.filter((point) => {
+      const detectionYear = getDetectionYear(point, dataset.years);
       if (filters.municipio && point.municipio !== filters.municipio) return false;
       if (
         filters.densityClass &&
@@ -441,8 +551,16 @@ export function PortalClient() {
       if (filters.densityMax && point.density > densityMax) return false;
       if (filters.principalMaxKm && point.principal > principalMax) return false;
       if (filters.secondaryMaxKm && point.secondary > secondaryMax) return false;
-      if (filters.yearMin && point.year < yearMin) return false;
-      if (filters.yearMax && point.year > yearMax) return false;
+      if (
+        filters.yearMin &&
+        (detectionYear === null || detectionYear < yearMin)
+      )
+        return false;
+      if (
+        filters.yearMax &&
+        (detectionYear === null || detectionYear > yearMax)
+      )
+        return false;
       if (
         search &&
         !point.code.toLocaleLowerCase("es").includes(search) &&
@@ -453,7 +571,7 @@ export function PortalClient() {
     });
   }, [dataset, filters]);
 
-  const filteredPoints = useMemo(() => {
+  const coverageCandidatePoints = useMemo(() => {
     if (!dataset || !coverageSelection) return baseFilteredPoints;
     if (coverageSelection.kind === "node") {
       const yearIndex = dataset.years.indexOf(coverageSelection.year);
@@ -470,13 +588,31 @@ export function PortalClient() {
     );
   }, [baseFilteredPoints, coverageSelection, dataset]);
 
+  const spatialFilteredBasePoints = useMemo(
+    () =>
+      spatialSelectionIds
+        ? baseFilteredPoints.filter((point) => spatialSelectionIds.has(point.id))
+        : baseFilteredPoints,
+    [baseFilteredPoints, spatialSelectionIds],
+  );
+
+  const filteredPoints = useMemo(
+    () =>
+      spatialSelectionIds
+        ? coverageCandidatePoints.filter((point) =>
+            spatialSelectionIds.has(point.id),
+          )
+        : coverageCandidatePoints,
+    [coverageCandidatePoints, spatialSelectionIds],
+  );
+
   const annualOption = useMemo<EChartsOption | null>(() => {
     if (!dataset) return null;
     const totals = new Map<string, number[]>();
     dataset.classes.forEach((cover) =>
       totals.set(cover, dataset.years.map(() => 0)),
     );
-    baseFilteredPoints.forEach((point) => {
+    spatialFilteredBasePoints.forEach((point) => {
       point.cover.forEach((cover, index) => {
         const values = totals.get(cover);
         if (values) values[index] += point.area / 10000;
@@ -523,7 +659,7 @@ export function PortalClient() {
         },
       })),
     };
-  }, [dataset, baseFilteredPoints]);
+  }, [dataset, spatialFilteredBasePoints]);
 
   const sankeyOption = useMemo<EChartsOption | null>(() => {
     if (!dataset) return null;
@@ -540,7 +676,7 @@ export function PortalClient() {
       })),
     );
     const links = new Map<string, number>();
-    baseFilteredPoints.forEach((point) => {
+    spatialFilteredBasePoints.forEach((point) => {
       for (let index = 0; index < yearIndexes.length - 1; index += 1) {
         const sourceCover = point.cover[yearIndexes[index]];
         const targetCover = point.cover[yearIndexes[index + 1]];
@@ -604,7 +740,7 @@ export function PortalClient() {
         },
       ],
     };
-  }, [dataset, baseFilteredPoints]);
+  }, [dataset, spatialFilteredBasePoints]);
 
   const toggleCoverageSelection = useCallback(
     (next: Exclude<CoverageSelection, null>) => {
@@ -829,7 +965,9 @@ export function PortalClient() {
           </div>
 
           <div className="filter-group">
-            <span className="group-label">Año de detección del estanque</span>
+            <span className="group-label">
+              Año de detección · primera cobertura “Estanques”
+            </span>
             <div className="filter-row">
               <label className="filter-field compact">
                 <span>Desde</span>
@@ -871,6 +1009,7 @@ export function PortalClient() {
             onClick={() => {
               setFilters(initialFilters);
               setCoverageSelection(null);
+              setSpatialSelectionIds(null);
             }}
           >
             Limpiar todos los filtros
@@ -884,10 +1023,19 @@ export function PortalClient() {
         <section className="workspace">
           <PortalMap
             points={filteredPoints}
+            selectablePoints={coverageCandidatePoints}
             allCount={dataset.points.length}
+            years={dataset.years}
             symbolMode={symbolMode}
             selection={coverageSelection}
+            spatialSelectionCount={
+              spatialSelectionIds ? filteredPoints.length : null
+            }
             onOpenFilters={() => setFilterOpen(true)}
+            onSpatialSelect={(pointIds) =>
+              setSpatialSelectionIds(new Set(pointIds))
+            }
+            onClearSpatialSelection={() => setSpatialSelectionIds(null)}
           />
 
           <div className="analysis-heading">

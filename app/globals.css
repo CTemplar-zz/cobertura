@@ -373,6 +373,29 @@ button {
   gap: 8px;
 }
 
+.draw-helper {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.spatial-clear {
+  align-items: center;
+  background: #fff7dc;
+  border: 1px solid #ead38a;
+  border-radius: 999px;
+  color: #705a12;
+  display: flex;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 7px;
+  padding: 7px 10px;
+}
+
+.spatial-clear span {
+  font-size: 15px;
+  line-height: 0.8;
+}
+
 .live-pill {
   background: #e5f3ed;
   border-radius: 999px;
@@ -426,7 +449,8 @@ button {
 }
 
 .leaflet-control-layers,
-.leaflet-control-zoom {
+.leaflet-control-zoom,
+.leaflet-draw-toolbar {
   border: 0 !important;
   box-shadow: 0 5px 18px rgba(20, 58, 47, 0.18) !important;
 }
@@ -669,6 +693,10 @@ button {
   }
 
   .map-title p {
+    display: none;
+  }
+
+  .draw-helper {
     display: none;
   }
 
