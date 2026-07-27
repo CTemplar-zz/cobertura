@@ -48,6 +48,23 @@ type Filters = {
   search: string;
 };
 
+type CoverageSelection =
+  | {
+      kind: "node";
+      year: number;
+      cover: string;
+    }
+  | {
+      kind: "transition";
+      sourceYear: number;
+      sourceCover: string;
+      targetYear: number;
+      targetCover: string;
+    }
+  | null;
+
+type MapSymbolMode = "coverage" | "density" | "parcel" | "selection";
+
 const initialFilters: Filters = {
   municipio: "",
   densityClass: "",
@@ -97,7 +114,10 @@ function downloadChart(chart: echarts.ECharts | null, filename: string) {
   link.click();
 }
 
-function useChart(option: EChartsOption | null) {
+function useChart(
+  option: EChartsOption | null,
+  onClick?: (params: Record<string, unknown>) => void,
+) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
@@ -122,6 +142,14 @@ function useChart(option: EChartsOption | null) {
     }
   }, [option]);
 
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !onClick) return;
+    const handler = (params: Record<string, unknown>) => onClick(params);
+    chart.on("click", handler);
+    return () => chart.off("click", handler);
+  }, [onClick]);
+
   return { containerRef, chartRef };
 }
 
@@ -130,13 +158,15 @@ function ChartCard({
   subtitle,
   option,
   filename,
+  onChartClick,
 }: {
   title: string;
   subtitle: string;
   option: EChartsOption | null;
   filename: string;
+  onChartClick?: (params: Record<string, unknown>) => void;
 }) {
-  const { containerRef, chartRef } = useChart(option);
+  const { containerRef, chartRef } = useChart(option, onChartClick);
   const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
@@ -183,15 +213,22 @@ function ChartCard({
 function PortalMap({
   points,
   allCount,
+  symbolMode,
+  selection,
+  onOpenFilters,
 }: {
   points: PointRecord[];
   allCount: number;
+  symbolMode: MapSymbolMode;
+  selection: CoverageSelection;
+  onOpenFilters: () => void;
 }) {
   const mapElement = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<LayerGroup | null>(null);
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
   const firstDraw = useRef(true);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -232,6 +269,7 @@ function PortalMap({
       L.control.zoom({ position: "bottomright" }).addTo(map);
       markersRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
+      setMapReady(true);
     }
     initializeMap();
     return () => {
@@ -239,10 +277,12 @@ function PortalMap({
       mapRef.current?.remove();
       mapRef.current = null;
       markersRef.current = null;
+      setMapReady(false);
     };
   }, []);
 
   useEffect(() => {
+    if (!mapReady) return;
     const L = leafletRef.current;
     const map = mapRef.current;
     const group = markersRef.current;
@@ -250,13 +290,24 @@ function PortalMap({
     group.clearLayers();
     const bounds = L.latLngBounds([]);
     points.forEach((point) => {
-      const color = DENSITY_COLORS[point.densityClass] ?? "#1f7259";
+      let symbolValue = point.cover.at(-1) ?? "Sin clase";
+      if (symbolMode === "density") symbolValue = point.densityClass;
+      if (symbolMode === "parcel") symbolValue = point.parcelClass;
+      if (symbolMode === "selection" && selection) {
+        symbolValue =
+          selection.kind === "node" ? selection.cover : selection.targetCover;
+      }
+      const palette =
+        symbolMode === "density" || symbolMode === "parcel"
+          ? DENSITY_COLORS
+          : COVER_COLORS;
+      const color = palette[symbolValue] ?? "#1f7259";
       const marker = L.circleMarker([point.y, point.x], {
-        radius: 4.5,
-        weight: 1,
+        radius: 5.5,
+        weight: 1.25,
         color: "#ffffff",
         fillColor: color,
-        fillOpacity: 0.84,
+        fillOpacity: 0.92,
       });
       marker.bindPopup(
         `<div class="map-popup">
@@ -280,20 +331,51 @@ function PortalMap({
       });
       firstDraw.current = false;
     }
-  }, [points, allCount]);
+  }, [points, allCount, mapReady, selection, symbolMode]);
+
+  const legend =
+    symbolMode === "density" || symbolMode === "parcel"
+      ? DENSITY_COLORS
+      : symbolMode === "selection" && selection
+        ? {
+            [selection.kind === "node"
+              ? `${selection.cover} · ${selection.year}`
+              : `${selection.targetCover} · ${selection.targetYear}`]:
+              COVER_COLORS[
+                selection.kind === "node"
+                  ? selection.cover
+                  : selection.targetCover
+              ] ?? "#1f7259",
+          }
+        : COVER_COLORS;
+  const legendTitle =
+    symbolMode === "density"
+      ? "Densidad"
+      : symbolMode === "parcel"
+        ? "Superficie del predio"
+        : symbolMode === "selection"
+          ? "Selección del gráfico"
+          : "Cobertura 2025";
 
   return (
     <section className="map-card">
       <div className="map-title">
         <div>
-          <span className="eyebrow">Visor territorial</span>
-          <h2>Estanques analizados</h2>
+          <span className="eyebrow">Cobertura & Piscicultura</span>
+          <h1>Visor territorial de estanques</h1>
+          <p>Explore los puntos y su cambio de cobertura entre 2010 y 2025.</p>
         </div>
-        <span className="live-pill">{formatNumber(points.length)} visibles</span>
+        <div className="map-title-actions">
+          <span className="live-pill">{formatNumber(points.length)} visibles</span>
+          <button className="filter-toggle" onClick={onOpenFilters}>
+            Filtros
+          </button>
+        </div>
       </div>
       <div className="map-frame" ref={mapElement} />
-      <div className="map-legend" aria-label="Leyenda de densidad">
-        {Object.entries(DENSITY_COLORS).map(([label, color]) => (
+      <div className="map-legend" aria-label={`Leyenda: ${legendTitle}`}>
+        <strong>{legendTitle}</strong>
+        {Object.entries(legend).map(([label, color]) => (
           <span key={label}>
             <i style={{ background: color }} />
             {label}
@@ -307,6 +389,8 @@ function PortalMap({
 export function PortalClient() {
   const [dataset, setDataset] = useState<PortalDataset | null>(null);
   const [filters, setFilters] = useState<Filters>(initialFilters);
+  const [coverageSelection, setCoverageSelection] =
+    useState<CoverageSelection>(null);
   const [filterOpen, setFilterOpen] = useState(false);
 
   useEffect(() => {
@@ -335,7 +419,7 @@ export function PortalClient() {
     [dataset],
   );
 
-  const filteredPoints = useMemo(() => {
+  const baseFilteredPoints = useMemo(() => {
     if (!dataset) return [];
     const densityMin = Number(filters.densityMin);
     const densityMax = Number(filters.densityMax);
@@ -369,13 +453,30 @@ export function PortalClient() {
     });
   }, [dataset, filters]);
 
+  const filteredPoints = useMemo(() => {
+    if (!dataset || !coverageSelection) return baseFilteredPoints;
+    if (coverageSelection.kind === "node") {
+      const yearIndex = dataset.years.indexOf(coverageSelection.year);
+      return baseFilteredPoints.filter(
+        (point) => point.cover[yearIndex] === coverageSelection.cover,
+      );
+    }
+    const sourceIndex = dataset.years.indexOf(coverageSelection.sourceYear);
+    const targetIndex = dataset.years.indexOf(coverageSelection.targetYear);
+    return baseFilteredPoints.filter(
+      (point) =>
+        point.cover[sourceIndex] === coverageSelection.sourceCover &&
+        point.cover[targetIndex] === coverageSelection.targetCover,
+    );
+  }, [baseFilteredPoints, coverageSelection, dataset]);
+
   const annualOption = useMemo<EChartsOption | null>(() => {
     if (!dataset) return null;
     const totals = new Map<string, number[]>();
     dataset.classes.forEach((cover) =>
       totals.set(cover, dataset.years.map(() => 0)),
     );
-    filteredPoints.forEach((point) => {
+    baseFilteredPoints.forEach((point) => {
       point.cover.forEach((cover, index) => {
         const values = totals.get(cover);
         if (values) values[index] += point.area / 10000;
@@ -422,7 +523,7 @@ export function PortalClient() {
         },
       })),
     };
-  }, [dataset, filteredPoints]);
+  }, [dataset, baseFilteredPoints]);
 
   const sankeyOption = useMemo<EChartsOption | null>(() => {
     if (!dataset) return null;
@@ -439,7 +540,7 @@ export function PortalClient() {
       })),
     );
     const links = new Map<string, number>();
-    filteredPoints.forEach((point) => {
+    baseFilteredPoints.forEach((point) => {
       for (let index = 0; index < yearIndexes.length - 1; index += 1) {
         const sourceCover = point.cover[yearIndexes[index]];
         const targetCover = point.cover[yearIndexes[index + 1]];
@@ -503,24 +604,94 @@ export function PortalClient() {
         },
       ],
     };
-  }, [dataset, filteredPoints]);
+  }, [dataset, baseFilteredPoints]);
 
-  const metrics = useMemo(() => {
-    const totalArea =
-      filteredPoints.reduce((sum, point) => sum + point.area, 0) / 10000;
-    const municipalitiesCount = new Set(
-      filteredPoints.map((point) => point.municipio),
-    ).size;
-    const cover2025 = new Map<string, number>();
-    filteredPoints.forEach((point) => {
-      const cover = point.cover.at(-1) ?? "";
-      cover2025.set(cover, (cover2025.get(cover) ?? 0) + point.area);
-    });
-    const dominant =
-      Array.from(cover2025.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ??
-      "—";
-    return { totalArea, municipalitiesCount, dominant };
-  }, [filteredPoints]);
+  const toggleCoverageSelection = useCallback(
+    (next: Exclude<CoverageSelection, null>) => {
+      setCoverageSelection((current) => {
+        if (!current || current.kind !== next.kind) return next;
+        if (
+          current.kind === "node" &&
+          next.kind === "node" &&
+          current.year === next.year &&
+          current.cover === next.cover
+        )
+          return null;
+        if (
+          current.kind === "transition" &&
+          next.kind === "transition" &&
+          current.sourceYear === next.sourceYear &&
+          current.sourceCover === next.sourceCover &&
+          current.targetYear === next.targetYear &&
+          current.targetCover === next.targetCover
+        )
+          return null;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleAnnualClick = useCallback(
+    (params: Record<string, unknown>) => {
+      if (params.seriesType !== "bar") return;
+      const year = Number(params.name);
+      const cover = String(params.seriesName ?? "");
+      if (Number.isFinite(year) && cover) {
+        toggleCoverageSelection({ kind: "node", year, cover });
+      }
+    },
+    [toggleCoverageSelection],
+  );
+
+  const handleSankeyClick = useCallback(
+    (params: Record<string, unknown>) => {
+      const parseNode = (value: unknown) => {
+        const match = String(value ?? "").match(/^(\d{4}) · (.+)$/);
+        return match ? { year: Number(match[1]), cover: match[2] } : null;
+      };
+      if (params.dataType === "edge") {
+        const data = params.data as
+          | { source?: string; target?: string }
+          | undefined;
+        const source = parseNode(data?.source);
+        const target = parseNode(data?.target);
+        if (source && target) {
+          toggleCoverageSelection({
+            kind: "transition",
+            sourceYear: source.year,
+            sourceCover: source.cover,
+            targetYear: target.year,
+            targetCover: target.cover,
+          });
+        }
+        return;
+      }
+      const node = parseNode(params.name);
+      if (node) {
+        toggleCoverageSelection({
+          kind: "node",
+          year: node.year,
+          cover: node.cover,
+        });
+      }
+    },
+    [toggleCoverageSelection],
+  );
+
+  const symbolMode: MapSymbolMode = coverageSelection
+    ? "selection"
+    : filters.densityClass || filters.densityMin || filters.densityMax
+      ? "density"
+      : filters.parcelClass
+        ? "parcel"
+        : "coverage";
+
+  const selectionLabel = coverageSelection
+    ? coverageSelection.kind === "node"
+      ? `${coverageSelection.cover} · ${coverageSelection.year}`
+      : `${coverageSelection.sourceYear} ${coverageSelection.sourceCover} → ${coverageSelection.targetYear} ${coverageSelection.targetCover}`
+    : "";
 
   if (!dataset) {
     return (
@@ -533,25 +704,6 @@ export function PortalClient() {
 
   return (
     <main className="portal-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">CC</span>
-          <div>
-            <strong>Cobertura & Piscicultura</strong>
-            <span>Geoportal de evolución territorial · 2010–2025</span>
-          </div>
-        </div>
-        <div className="header-meta">
-          <span>Amazonía boliviana</span>
-          <button
-            className="filter-toggle"
-            onClick={() => setFilterOpen((value) => !value)}
-          >
-            Filtros
-          </button>
-        </div>
-      </header>
-
       <div className="portal-grid">
         <aside className={`filters-panel ${filterOpen ? "filters-open" : ""}`}>
           <div className="filters-header">
@@ -716,59 +868,48 @@ export function PortalClient() {
 
           <button
             className="reset-button"
-            onClick={() => setFilters(initialFilters)}
+            onClick={() => {
+              setFilters(initialFilters);
+              setCoverageSelection(null);
+            }}
           >
             Limpiar todos los filtros
           </button>
           <p className="filter-note">
-            Los filtros actualizan simultáneamente el mapa, indicadores y
+            Los filtros actualizan simultáneamente los puntos del mapa y los
             gráficos.
           </p>
         </aside>
 
         <section className="workspace">
-          <div className="intro-row">
-            <div>
-              <span className="eyebrow">Cambio de cobertura terrestre</span>
-              <h1>Dinámica territorial de la piscicultura</h1>
-              <p>
-                Explore dónde se localizaron los estanques y cómo evolucionó la
-                cobertura observada entre 2010 y 2025.
-              </p>
-            </div>
-            <div className="data-badge">
-              <strong>{formatNumber(filteredPoints.length)}</strong>
-              <span>de {formatNumber(dataset.points.length)} puntos</span>
-            </div>
-          </div>
-
-          <div className="metric-grid">
-            <article className="metric-card">
-              <span>Puntos filtrados</span>
-              <strong>{formatNumber(filteredPoints.length)}</strong>
-              <small>observaciones con serie completa</small>
-            </article>
-            <article className="metric-card">
-              <span>Superficie analizada</span>
-              <strong>{formatNumber(metrics.totalArea, 1)} ha</strong>
-              <small>suma de áreas de estanques</small>
-            </article>
-            <article className="metric-card">
-              <span>Municipios</span>
-              <strong>{metrics.municipalitiesCount}</strong>
-              <small>presentes en la selección</small>
-            </article>
-            <article className="metric-card accent">
-              <span>Cobertura dominante 2025</span>
-              <strong>{metrics.dominant}</strong>
-              <small>por superficie agregada</small>
-            </article>
-          </div>
-
           <PortalMap
             points={filteredPoints}
             allCount={dataset.points.length}
+            symbolMode={symbolMode}
+            selection={coverageSelection}
+            onOpenFilters={() => setFilterOpen(true)}
           />
+
+          <div className="analysis-heading">
+            <div>
+              <span className="eyebrow">Análisis de cambio</span>
+              <h2>Evolución de la cobertura</h2>
+              <p>
+                Haz clic en una barra, nodo o flujo para filtrar los puntos del
+                mapa.
+              </p>
+            </div>
+            {coverageSelection ? (
+              <button
+                className="selection-chip"
+                onClick={() => setCoverageSelection(null)}
+                title="Quitar selección del gráfico"
+              >
+                {selectionLabel}
+                <span aria-hidden="true">×</span>
+              </button>
+            ) : null}
+          </div>
 
           <div className="charts-grid">
             <ChartCard
@@ -776,12 +917,14 @@ export function PortalClient() {
               subtitle="Superficie agregada por clase de cobertura, 2010–2025."
               option={annualOption}
               filename="evolucion_anual_cobertura"
+              onChartClick={handleAnnualClick}
             />
             <ChartCard
               title="Transiciones quinquenales"
               subtitle="Flujos de cobertura entre 2010, 2015, 2020 y 2025."
               option={sankeyOption}
               filename="sankey_cambio_cobertura"
+              onChartClick={handleSankeyClick}
             />
           </div>
 
