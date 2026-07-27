@@ -287,8 +287,9 @@ function PortalMap({
     let cancelled = false;
     async function initializeMap() {
       if (!mapElement.current || mapRef.current) return;
-      const L = await import("leaflet");
-      await import("leaflet-draw");
+      const leafletModule = await import("leaflet");
+      const L = (leafletModule.default ??
+        leafletModule) as typeof import("leaflet");
       if (cancelled || !mapElement.current) return;
       leafletRef.current = L;
       const map = L.map(mapElement.current, {
@@ -322,46 +323,53 @@ function PortalMap({
         .addTo(map);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       markersRef.current = L.layerGroup().addTo(map);
-      const drawnItems = L.featureGroup().addTo(map);
-      drawnItemsRef.current = drawnItems;
-      const drawControl = new L.Control.Draw({
-        position: "topleft",
-        draw: {
-          polygon: {
-            allowIntersection: false,
-            showArea: true,
-            shapeOptions: {
-              color: "#f2c94c",
-              fillColor: "#f2c94c",
-              fillOpacity: 0.16,
-              weight: 2,
-            },
-          },
-          polyline: false,
-          rectangle: false,
-          circle: false,
-          marker: false,
-          circlemarker: false,
-        },
-        edit: false,
-      });
-      map.addControl(drawControl);
-      map.on(L.Draw.Event.CREATED, (event) => {
-        const layer = event.layer;
-        drawnItems.clearLayers();
-        drawnItems.addLayer(layer);
-        const latLngs = (
-          layer as import("leaflet").Polygon
-        ).getLatLngs()[0] as Array<{ lat: number; lng: number }>;
-        const selectedIds = selectablePointsRef.current
-          .filter((point) =>
-            isPointInsidePolygon({ lat: point.y, lng: point.x }, latLngs),
-          )
-          .map((point) => point.id);
-        onSpatialSelectRef.current(selectedIds);
-      });
       mapRef.current = map;
       setMapReady(true);
+
+      try {
+        await import("leaflet-draw");
+        if (cancelled) return;
+        const drawnItems = L.featureGroup().addTo(map);
+        drawnItemsRef.current = drawnItems;
+        const drawControl = new L.Control.Draw({
+          position: "topleft",
+          draw: {
+            polygon: {
+              allowIntersection: false,
+              showArea: true,
+              shapeOptions: {
+                color: "#f2c94c",
+                fillColor: "#f2c94c",
+                fillOpacity: 0.16,
+                weight: 2,
+              },
+            },
+            polyline: false,
+            rectangle: false,
+            circle: false,
+            marker: false,
+            circlemarker: false,
+          },
+          edit: false,
+        });
+        map.addControl(drawControl);
+        map.on(L.Draw.Event.CREATED, (event) => {
+          const layer = event.layer;
+          drawnItems.clearLayers();
+          drawnItems.addLayer(layer);
+          const latLngs = (
+            layer as import("leaflet").Polygon
+          ).getLatLngs()[0] as Array<{ lat: number; lng: number }>;
+          const selectedIds = selectablePointsRef.current
+            .filter((point) =>
+              isPointInsidePolygon({ lat: point.y, lng: point.x }, latLngs),
+            )
+            .map((point) => point.id);
+          onSpatialSelectRef.current(selectedIds);
+        });
+      } catch (error) {
+        console.error("No se pudo iniciar la selección por polígono", error);
+      }
     }
     initializeMap();
     return () => {
@@ -1078,7 +1086,7 @@ export function PortalClient() {
 
           <footer className="portal-footer">
             <span>
-              Fuente: COBERTURA_TOTAL.xlsx · Clasificación visual multitemporal
+              Fuente: COBERTURA_TOTAL2.xlsx · Clasificación visual multitemporal
             </span>
             <span>Último periodo: 2025</span>
           </footer>

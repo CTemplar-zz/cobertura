@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 
-SOURCE = Path(r"C:\Articulos Cientificos\COBERTURA\COBERTURA_TOTAL.xlsx")
+SOURCE = Path(r"C:\Articulos Cientificos\COBERTURA\COBERTURA_TOTAL2.xlsx")
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "public" / "data"
 YEARS = list(range(2010, 2026))
 
