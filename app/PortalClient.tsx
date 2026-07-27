@@ -277,6 +277,7 @@ function PortalMap({
         preferCanvas: true,
       }).setView([-17.22, -64.55], 7);
       map.createPane("kernelDensityPane").style.zIndex = "350";
+      map.createPane("municipalBoundaryPane").style.zIndex = "400";
       map.createPane("roadNetworkPane").style.zIndex = "410";
       map.createPane("totalPondsPane").style.zIndex = "430";
       map.createPane("samplePondsPane").style.zIndex = "450";
@@ -326,9 +327,25 @@ function PortalMap({
       const principalRoadsLayer = L.geoJSON(undefined, {
         pane: "roadNetworkPane",
         style: {
-          color: "#ffffff",
+          color: "#cdaa7d",
           weight: 2,
           opacity: 1,
+        },
+      });
+      const municipalBoundariesLayer = L.geoJSON(undefined, {
+        pane: "municipalBoundaryPane",
+        style: {
+          color: "#ffffff",
+          weight: 1.5,
+          opacity: 1,
+          fill: false,
+          fillOpacity: 0,
+        },
+        onEachFeature: (feature, layer) => {
+          const municipality = String(
+            feature.properties?.MUNICIPIO ?? "",
+          ).trim();
+          if (municipality) layer.bindTooltip(municipality, { sticky: true });
         },
       });
       const secondaryRoadsLayer = L.geoJSON(undefined, {
@@ -368,6 +385,7 @@ function PortalMap({
       });
 
       kernelLayer.addTo(map);
+      municipalBoundariesLayer.addTo(map);
       principalRoadsLayer.addTo(map);
       secondaryRoadsLayer.addTo(map);
       allPondsLayer.addTo(map);
@@ -380,6 +398,7 @@ function PortalMap({
           },
           {
             "Densidad Kernel 10 km": kernelLayer,
+            "Límites municipales": municipalBoundariesLayer,
             "Carreteras principales": principalRoadsLayer,
             "Carreteras secundarias": secondaryRoadsLayer,
             "Estanques piscícolas (todos)": allPondsLayer,
@@ -405,6 +424,10 @@ function PortalMap({
 
       Promise.all([
         loadGeoJson("data/layers/densidad_kernel_10km.geojson", kernelLayer),
+        loadGeoJson(
+          "data/layers/limites_municipales.geojson",
+          municipalBoundariesLayer,
+        ),
         loadGeoJson(
           "data/layers/carreteras_principales.geojson",
           principalRoadsLayer,
