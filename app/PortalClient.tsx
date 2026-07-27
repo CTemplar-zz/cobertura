@@ -276,6 +276,10 @@ function PortalMap({
         zoomControl: false,
         preferCanvas: true,
       }).setView([-17.22, -64.55], 7);
+      map.createPane("kernelDensityPane").style.zIndex = "350";
+      map.createPane("roadNetworkPane").style.zIndex = "410";
+      map.createPane("totalPondsPane").style.zIndex = "430";
+      map.createPane("samplePondsPane").style.zIndex = "450";
       const satellite = L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         {
@@ -291,13 +295,95 @@ function PortalMap({
         },
       );
       satellite.addTo(map);
+
+      const pondRenderer = L.canvas({ padding: 0.5 });
+      const kernelLayer = L.geoJSON(undefined, {
+        pane: "kernelDensityPane",
+        style: (feature) => {
+          const densityClass = String(feature?.properties?.CLASE ?? "");
+          const color =
+            densityClass === "Alta"
+              ? "#e31a1c"
+              : densityClass === "Media"
+                ? "#feb24c"
+                : "#ffffb2";
+          return {
+            color,
+            weight: 0.6,
+            fillColor: color,
+            fillOpacity: densityClass === "Alta" ? 0.42 : 0.34,
+          };
+        },
+        onEachFeature: (feature, layer) => {
+          const densityClass = String(feature.properties?.CLASE ?? "");
+          const classValue = String(feature.properties?.gridcode ?? "");
+          layer.bindTooltip(
+            `Densidad ${densityClass} · Clase ${classValue}`,
+            { sticky: true },
+          );
+        },
+      });
+      const principalRoadsLayer = L.geoJSON(undefined, {
+        pane: "roadNetworkPane",
+        style: {
+          color: "#ffffff",
+          weight: 2,
+          opacity: 1,
+        },
+      });
+      const secondaryRoadsLayer = L.geoJSON(undefined, {
+        pane: "roadNetworkPane",
+        style: {
+          color: "#e1e1e1",
+          weight: 1,
+          opacity: 1,
+        },
+        onEachFeature: (feature, layer) => {
+          const name = String(feature.properties?.nombr ?? "").trim();
+          if (name && name !== "Desconocido") layer.bindTooltip(name);
+        },
+      });
+      const allPondsLayer = L.geoJSON(undefined, {
+        pane: "totalPondsPane",
+        pointToLayer: (feature, latlng) =>
+          L.circleMarker(latlng, {
+            pane: "totalPondsPane",
+            renderer: pondRenderer,
+            radius: 2.4,
+            weight: 0.7,
+            color: "#000000",
+            fillColor: "#00c5ff",
+            fillOpacity: 0.88,
+          }).bindTooltip(
+            [
+              feature.properties?.MUNICIPIO,
+              feature.properties?.YEAR
+                ? `Año ${feature.properties.YEAR}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            { sticky: true },
+          ),
+      });
+
+      kernelLayer.addTo(map);
+      principalRoadsLayer.addTo(map);
+      secondaryRoadsLayer.addTo(map);
+      allPondsLayer.addTo(map);
+
       L.control
         .layers(
           {
             "Satélite Esri": satellite,
             "Calles OpenStreetMap": streets,
           },
-          undefined,
+          {
+            "Densidad Kernel 10 km": kernelLayer,
+            "Carreteras principales": principalRoadsLayer,
+            "Carreteras secundarias": secondaryRoadsLayer,
+            "Estanques piscícolas (todos)": allPondsLayer,
+          },
           { position: "topright" },
         )
         .addTo(map);
@@ -305,6 +391,32 @@ function PortalMap({
       markersRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
       setMapReady(true);
+
+      const loadGeoJson = async (
+        url: string,
+        layer: ReturnType<typeof L.geoJSON>,
+      ) => {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`No se pudo cargar la capa ${url}`);
+        }
+        layer.addData((await response.json()) as never);
+      };
+
+      Promise.all([
+        loadGeoJson("data/layers/densidad_kernel_10km.geojson", kernelLayer),
+        loadGeoJson(
+          "data/layers/carreteras_principales.geojson",
+          principalRoadsLayer,
+        ),
+        loadGeoJson(
+          "data/layers/carreteras_secundarias.geojson",
+          secondaryRoadsLayer,
+        ),
+        loadGeoJson("data/layers/estanques_piscicolas.geojson", allPondsLayer),
+      ]).catch((error) =>
+        console.error("No se pudieron cargar las capas territoriales", error),
+      );
 
       try {
         await import("leaflet-draw");
@@ -382,6 +494,7 @@ function PortalMap({
           : COVER_COLORS;
       const color = palette[symbolValue] ?? "#1f7259";
       const marker = L.circleMarker([point.y, point.x], {
+        pane: "samplePondsPane",
         radius: 5.5,
         weight: 1.25,
         color: "#ffffff",
