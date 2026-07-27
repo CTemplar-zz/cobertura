@@ -107,30 +107,6 @@ function getDetectionYear(point: PointRecord, years: number[]) {
   return firstPondIndex >= 0 ? years[firstPondIndex] : null;
 }
 
-function isPointInsidePolygon(
-  point: { lat: number; lng: number },
-  polygon: Array<{ lat: number; lng: number }>,
-) {
-  let inside = false;
-  for (
-    let current = 0, previous = polygon.length - 1;
-    current < polygon.length;
-    previous = current++
-  ) {
-    const currentVertex = polygon[current];
-    const previousVertex = polygon[previous];
-    const intersects =
-      currentVertex.lat > point.lat !== previousVertex.lat > point.lat &&
-      point.lng <
-        ((previousVertex.lng - currentVertex.lng) *
-          (point.lat - currentVertex.lat)) /
-          (previousVertex.lat - currentVertex.lat) +
-          currentVertex.lng;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
 function downloadChart(chart: echarts.ECharts | null, filename: string) {
   if (!chart) return;
   const link = document.createElement("a");
@@ -333,79 +309,18 @@ function PortalMap({
       try {
         await import("leaflet-draw");
         if (cancelled) return;
-        type PolygonDrawContext = {
-          _markers: Array<{
-            getLatLng: () => import("leaflet").LatLng;
-            off: (event: string, handler: () => void) => void;
-            on: (event: string, handler: () => void) => void;
-          }>;
-          _map: LeafletMap;
-          _finishShape: () => void;
-          _finishOnDoubleClick?: () => void;
-          deleteLastVertex: () => void;
-        };
-        const polygonPrototype = L.Draw.Polygon.prototype as unknown as {
-          _updateFinishHandler: (this: PolygonDrawContext) => void;
-          _cleanUpShape: (this: PolygonDrawContext) => void;
-          __unlimitedDoubleClickPatched?: boolean;
-        };
-        if (!polygonPrototype.__unlimitedDoubleClickPatched) {
-          const originalCleanUpShape = polygonPrototype._cleanUpShape;
-          polygonPrototype._updateFinishHandler = function () {
-            if (!this._finishOnDoubleClick) {
-              this._finishOnDoubleClick = () => {
-                const markerCount = this._markers.length;
-                if (markerCount > 3) {
-                  const last = this._markers[markerCount - 1].getLatLng();
-                  const previous = this._markers[markerCount - 2].getLatLng();
-                  if (last.distanceTo(previous) < 2) {
-                    this.deleteLastVertex();
-                  }
-                }
-                this._finishShape();
-              };
-            }
-            this._map.off("dblclick", this._finishOnDoubleClick);
-            this._markers.forEach((marker) =>
-              marker.off("dblclick", this._finishOnDoubleClick!),
-            );
-            if (this._markers.length >= 3) {
-              this._map.on("dblclick", this._finishOnDoubleClick);
-              this._markers.at(-1)?.on(
-                "dblclick",
-                this._finishOnDoubleClick,
-              );
-            }
-          };
-          polygonPrototype._cleanUpShape = function () {
-            if (this._finishOnDoubleClick) {
-              this._map.off("dblclick", this._finishOnDoubleClick);
-              this._markers.forEach((marker) =>
-                marker.off("dblclick", this._finishOnDoubleClick!),
-              );
-            }
-            originalCleanUpShape.call(this);
-          };
-          polygonPrototype.__unlimitedDoubleClickPatched = true;
-        }
-        L.drawLocal.draw.toolbar.buttons.polygon =
-          "Seleccionar puntos mediante un polígono";
-        L.drawLocal.draw.toolbar.finish.text = "Terminar";
-        L.drawLocal.draw.handlers.polygon.tooltip.start =
-          "Haga clic para iniciar el polígono.";
-        L.drawLocal.draw.handlers.polygon.tooltip.cont =
-          "Continúe agregando vértices.";
-        L.drawLocal.draw.handlers.polygon.tooltip.end =
-          "Haga doble clic para terminar el polígono.";
+        L.drawLocal.draw.toolbar.buttons.rectangle =
+          "Seleccionar puntos mediante un rectángulo";
+        L.drawLocal.draw.handlers.rectangle.tooltip.start =
+          "Arrastre para dibujar el área de selección.";
         const drawnItems = L.featureGroup().addTo(map);
         drawnItemsRef.current = drawnItems;
         const drawControl = new L.Control.Draw({
           position: "topleft",
           draw: {
-            polygon: {
-              allowIntersection: false,
-              maxPoints: 0,
-              showArea: true,
+            polygon: false,
+            polyline: false,
+            rectangle: {
               shapeOptions: {
                 color: "#f2c94c",
                 fillColor: "#f2c94c",
@@ -413,8 +328,6 @@ function PortalMap({
                 weight: 2,
               },
             },
-            polyline: false,
-            rectangle: false,
             circle: false,
             marker: false,
             circlemarker: false,
@@ -426,18 +339,14 @@ function PortalMap({
           const layer = event.layer;
           drawnItems.clearLayers();
           drawnItems.addLayer(layer);
-          const latLngs = (
-            layer as import("leaflet").Polygon
-          ).getLatLngs()[0] as Array<{ lat: number; lng: number }>;
+          const bounds = (layer as import("leaflet").Rectangle).getBounds();
           const selectedIds = selectablePointsRef.current
-            .filter((point) =>
-              isPointInsidePolygon({ lat: point.y, lng: point.x }, latLngs),
-            )
+            .filter((point) => bounds.contains([point.y, point.x]))
             .map((point) => point.id);
           onSpatialSelectRef.current(selectedIds);
         });
       } catch (error) {
-        console.error("No se pudo iniciar la selección por polígono", error);
+        console.error("No se pudo iniciar la selección rectangular", error);
       }
     }
     initializeMap();
@@ -548,7 +457,7 @@ function PortalMap({
               <span aria-hidden="true">×</span>
             </button>
           ) : (
-            <span className="draw-helper">Dibuje un polígono para filtrar</span>
+            <span className="draw-helper">Dibuje un rectángulo para filtrar</span>
           )}
           <span className="live-pill">{formatNumber(points.length)} visibles</span>
           <button className="filter-toggle" onClick={onOpenFilters}>
@@ -741,21 +650,6 @@ export function PortalClient() {
   const sankeyOption = useMemo<EChartsOption | null>(() => {
     if (!dataset) return null;
     const yearIndexes = SANKEY_YEARS.map((year) => dataset.years.indexOf(year));
-    const nodes = SANKEY_YEARS.flatMap((year, depth) =>
-      dataset.classes.map((cover) => ({
-        name: `${year} · ${cover}`,
-        depth,
-        label:
-          depth === SANKEY_YEARS.length - 1
-            ? { position: "left", align: "right" }
-            : { position: "right", align: "left" },
-        itemStyle: {
-          color: COVER_COLORS[cover],
-          borderColor: "#ffffff",
-          borderWidth: 1,
-        },
-      })),
-    );
     const links = new Map<string, number>();
     spatialFilteredBasePoints.forEach((point) => {
       for (let index = 0; index < yearIndexes.length - 1; index += 1) {
@@ -767,6 +661,32 @@ export function PortalClient() {
         links.set(key, (links.get(key) ?? 0) + point.area / 10000);
       }
     });
+    const sankeyLinks = Array.from(links.entries())
+      .filter(([, value]) => value > 0)
+      .map(([key, value]) => {
+        const [source, target] = key.split("|||");
+        return { source, target, value };
+      });
+    const activeNodeNames = new Set(
+      sankeyLinks.flatMap((link) => [link.source, link.target]),
+    );
+    const nodes = SANKEY_YEARS.flatMap((year, depth) =>
+      dataset.classes
+        .map((cover) => ({
+          name: `${year} · ${cover}`,
+          depth,
+          label:
+            depth === SANKEY_YEARS.length - 1
+              ? { position: "left", align: "right" }
+              : { position: "right", align: "left" },
+          itemStyle: {
+            color: COVER_COLORS[cover],
+            borderColor: "#ffffff",
+            borderWidth: 1,
+          },
+        }))
+        .filter((node) => activeNodeNames.has(node.name)),
+    );
     return {
       animationDuration: 650,
       tooltip: {
@@ -793,10 +713,7 @@ export function PortalClient() {
         {
           type: "sankey",
           data: nodes,
-          links: Array.from(links.entries()).map(([key, value]) => {
-            const [source, target] = key.split("|||");
-            return { source, target, value };
-          }),
+          links: sankeyLinks,
           left: 18,
           right: 28,
           top: 18,
@@ -807,6 +724,10 @@ export function PortalClient() {
           layoutIterations: 48,
           draggable: true,
           emphasis: { focus: "adjacency" },
+          labelLayout: {
+            hideOverlap: true,
+            moveOverlap: "shiftY",
+          },
           label: {
             color: "#1f3f35",
             fontSize: 10,
